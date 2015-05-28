@@ -2,7 +2,7 @@
 
 %{
 #include <myinit.h>
-#include "TriangleMesh.hpp"
+#include "libslic3r/TriangleMesh.hpp"
 %}
 
 %name{Slic3r::TriangleMesh} class TriangleMesh {
@@ -17,8 +17,8 @@
     void repair();
     void WriteOBJFile(char* output_file);
     void scale(float factor);
-    void scale_xyz(std::vector<double> versor)
-        %code{% THIS->scale(versor); %};
+    void scale_xyz(Pointf3* versor)
+        %code{% THIS->scale(*versor); %};
     void translate(float x, float y, float z);
     void rotate_x(float angle);
     void rotate_y(float angle);
@@ -29,16 +29,14 @@
     void align_to_origin();
     void rotate(double angle, Point* center);
     TriangleMeshPtrs split();
-    void merge(TriangleMesh* mesh);
-    ExPolygons horizontal_projection()
-        %code{% THIS->horizontal_projection(RETVAL); %};
-    BoundingBoxf3* bounding_box()
-        %code{%
-            RETVAL = new BoundingBoxf3();
-            THIS->bounding_box(RETVAL);
-        %};
-    int facets_count()
-        %code{% RETVAL = THIS->stl.stats.number_of_facets; %};
+    void merge(TriangleMesh* mesh)
+        %code{% THIS->merge(*mesh); %};
+    ExPolygons horizontal_projection();
+    Clone<Polygon> convex_hull();
+    Clone<BoundingBoxf3> bounding_box();
+    Clone<Pointf3> center()
+        %code{% RETVAL = THIS->bounding_box().center(); %};
+    int facets_count();
     void reset_repair_stats();
 %{
 
@@ -143,11 +141,10 @@ TriangleMesh::size()
 
 SV*
 TriangleMesh::slice(z)
-    std::vector<double>* z
+    std::vector<double> z
     CODE:
         // convert doubles to floats
-        std::vector<float> z_f(z->begin(), z->end());
-        delete z;
+        std::vector<float> z_f(z.begin(), z.end());
         
         std::vector<ExPolygons> layers;
         TriangleMeshSlicer mslicer(THIS);
@@ -188,14 +185,6 @@ TriangleMesh::bb3()
         RETVAL.push_back(THIS->stl.stats.max.y);
         RETVAL.push_back(THIS->stl.stats.min.z);
         RETVAL.push_back(THIS->stl.stats.max.z);
-    OUTPUT:
-        RETVAL
-
-Polygon*
-TriangleMesh::convex_hull()
-    CODE:
-        RETVAL = new Polygon ();
-        THIS->convex_hull(RETVAL);
     OUTPUT:
         RETVAL
 

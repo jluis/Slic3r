@@ -9,8 +9,11 @@
 %typemap{std::vector<unsigned int>*};
 %typemap{std::vector<double>};
 %typemap{std::vector<double>*};
+%typemap{std::vector<unsigned int>};
+%typemap{std::vector<unsigned int>*};
 %typemap{std::vector<std::string>};
 %typemap{t_layer_height_ranges};
+%typemap{void*};
 %typemap{SV*};
 %typemap{AV*};
 %typemap{Point*};
@@ -40,6 +43,8 @@
 %typemap{Ref<PrintObjectConfig>}{simple};
 %typemap{PrintRegionConfig*};
 %typemap{Ref<PrintRegionConfig>}{simple};
+%typemap{GCodeConfig*};
+%typemap{Ref<GCodeConfig>}{simple};
 %typemap{PrintConfig*};
 %typemap{Ref<PrintConfig>}{simple};
 %typemap{FullPrintConfig*};
@@ -56,6 +61,9 @@
 %typemap{Line*};
 %typemap{Ref<Line>}{simple};
 %typemap{Clone<Line>}{simple};
+%typemap{Linef3*};
+%typemap{Ref<Linef3>}{simple};
+%typemap{Clone<Linef3>}{simple};
 %typemap{Polyline*};
 %typemap{Ref<Polyline>}{simple};
 %typemap{Clone<Polyline>}{simple};
@@ -77,6 +85,19 @@
 %typemap{PolylineCollection*};
 %typemap{Ref<PolylineCollection>}{simple};
 %typemap{Clone<PolylineCollection>}{simple};
+%typemap{MotionPlanner*};
+%typemap{Ref<MotionPlanner>}{simple};
+%typemap{Clone<MotionPlanner>}{simple};
+%typemap{GCodeWriter*};
+%typemap{Ref<GCodeWriter>}{simple};
+%typemap{Clone<GCodeWriter>}{simple};
+%typemap{BridgeDetector*};
+%typemap{Ref<BridgeDetector>}{simple};
+%typemap{Clone<BridgeDetector>}{simple};
+
+%typemap{Surface*};
+%typemap{Ref<Surface>}{simple};
+%typemap{Clone<Surface>}{simple};
 
 %typemap{PrintState*};
 %typemap{Ref<PrintState>}{simple};
@@ -118,6 +139,8 @@
 %typemap{TriangleMeshPtrs};
 %typemap{Ref<SurfaceCollection>}{simple};
 %typemap{Extruder*};
+%typemap{Ref<Extruder>}{simple};
+%typemap{Clone<Extruder>}{simple};
 %typemap{Model*};
 %typemap{Ref<Model>}{simple};
 %typemap{Clone<Model>}{simple};
@@ -142,6 +165,7 @@
 %typemap{ModelInstancePtrs*};
 %typemap{Ref<ModelInstancePtrs>}{simple};
 %typemap{Clone<ModelInstancePtrs>}{simple};
+%typemap{GLVertexArray*};
 
 %typemap{PrintRegionPtrs*};
 %typemap{PrintObjectPtrs*};
@@ -149,6 +173,12 @@
 %typemap{SupportLayerPtrs*};
 
 
+%typemap{Axis}{parsed}{
+  %cpp_type{Axis};
+  %precall_code{%
+    $CVar = (Axis)SvUV($PerlVar);
+  %};
+};
 %typemap{SurfaceType}{parsed}{
   %cpp_type{SurfaceType};
   %precall_code{%

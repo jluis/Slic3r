@@ -2,8 +2,8 @@
 
 %{
 #include <myinit.h>
-#include "ExtrusionEntity.hpp"
-#include "ExtrusionEntityCollection.hpp"
+#include "libslic3r/ExtrusionEntity.hpp"
+#include "libslic3r/ExtrusionEntityCollection.hpp"
 %}
 
 %name{Slic3r::ExtrusionPath} class ExtrusionPath {
@@ -23,11 +23,13 @@
     void simplify(double tolerance);
     double length();
     bool is_perimeter();
-    bool is_fill();
+    bool is_infill();
+    bool is_solid_infill();
     bool is_bridge();
     std::string gcode(Extruder* extruder, double e, double F,
         double xofs, double yofs, std::string extrusion_axis,
         std::string gcode_line_suffix);
+    Polygons grow();
 %{
 
 ExtrusionPath*

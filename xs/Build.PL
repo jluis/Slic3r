@@ -29,7 +29,7 @@ my $build = Module::Build::WithXSpp->new(
     dist_abstract   => 'XS code for Slic3r',
     build_requires => {qw(
         ExtUtils::ParseXS           3.18
-        ExtUtils::Typemap           1.00
+        ExtUtils::Typemaps          1.00
         ExtUtils::Typemaps::Default 1.05
         ExtUtils::XSpp              0.17
         Module::Build               0.3601
@@ -44,7 +44,7 @@ my $build = Module::Build::WithXSpp->new(
     
     # Provides extra C typemaps that are auto-merged
     extra_typemap_modules => {
-        'ExtUtils::Typemaps::Default' => '1.03',
+        'ExtUtils::Typemaps::Basic' => '1.05',
     },
     
     # for MSVC builds

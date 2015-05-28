@@ -1,4 +1,4 @@
-use Test::More tests => 13;
+use Test::More tests => 21;
 use strict;
 use warnings;
 
@@ -8,7 +8,7 @@ BEGIN {
 }
 
 use Slic3r;
-use List::Util qw(first);
+use List::Util qw(first sum);
 use Slic3r::Geometry qw(epsilon scale unscale scaled_epsilon Y);
 use Slic3r::Test;
 
@@ -119,6 +119,54 @@ if (0) {
     is scalar(@$res), 1, 'medial axis of a L shape is a single polyline';
     my $len = unscale($res->[0]->length) + 20;  # 20 is the thickness of the expolygon, which is subtracted from the ends
     ok $len > 80*2 && $len < 100*2, 'medial axis has reasonable length';
+}
+
+{
+    my $expolygon = Slic3r::ExPolygon->new(Slic3r::Polygon->new(
+        [-203064906,-51459966],[-219312231,-51459966],[-219335477,-51459962],[-219376095,-51459962],[-219412047,-51459966],
+        [-219572094,-51459966],[-219624814,-51459962],[-219642183,-51459962],[-219656665,-51459966],[-220815482,-51459966],
+        [-220815482,-37738966],[-221117540,-37738966],[-221117540,-51762024],[-203064906,-51762024],
+    ));
+    my $polylines = $expolygon->medial_axis(819998, 102499.75);
+    
+    my $perimeter = $expolygon->contour->split_at_first_point->length;
+    ok sum(map $_->length, @$polylines) > $perimeter/2/4*3, 'medial axis has a reasonable length';
+}
+
+{
+    my $expolygon = Slic3r::ExPolygon->new(Slic3r::Polygon->new_scale(
+        [50, 100],
+        [300, 102],
+        [50, 104],
+    ));
+    my $res = $expolygon->medial_axis(scale 4, scale 0.5);
+    is scalar(@$res), 1, 'medial axis of a narrow triangle is a single line';
+    ok unscale($res->[0]->length) >= (200-100 - (120-100)) - epsilon, 'medial axis has reasonable length';
+}
+
+{
+    # GH #2474
+    my $expolygon = Slic3r::ExPolygon->new(Slic3r::Polygon->new(
+        [91294454,31032190],[11294481,31032190],[11294481,29967810],[44969182,29967810],[89909960,29967808],[91294454,29967808]
+    ));
+    my $polylines = $expolygon->medial_axis(1871238, 500000);
+    
+    is scalar(@$polylines), 1, 'medial axis is a single polyline';
+    my $polyline = $polylines->[0];
+    
+    my $expected_y = $expolygon->bounding_box->center->y; #;;
+    ok abs(sum(map $_->y, @$polyline) / @$polyline - $expected_y) < scaled_epsilon, #,,
+        'medial axis is horizontal and is centered';
+    
+    # order polyline from left to right
+    $polyline->reverse if $polyline->first_point->x > $polyline->last_point->x;
+    
+    my $polyline_bb = $polyline->bounding_box;
+    is $polyline->first_point->x, $polyline_bb->x_min, 'expected x_min';
+    is $polyline->last_point->x,  $polyline_bb->x_max, 'expected x_max';
+    
+    is_deeply [ map $_->x, @$polyline ], [ sort map $_->x, @$polyline ],
+        'medial axis is not self-overlapping';
 }
 
 __END__

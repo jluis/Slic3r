@@ -2,7 +2,7 @@
 
 %{
 #include <myinit.h>
-#include "ExPolygonCollection.hpp"
+#include "libslic3r/ExPolygonCollection.hpp"
 %}
 
 %name{Slic3r::ExPolygon::Collection} class ExPolygonCollection {
@@ -18,10 +18,15 @@
     int count()
         %code{% RETVAL = THIS->expolygons.size(); %};
     bool contains_point(Point* point)
-        %code{% RETVAL = THIS->contains_point(*point); %};
+        %code{% RETVAL = THIS->contains(*point); %};
+    bool contains_line(Line* line)
+        %code{% RETVAL = THIS->contains(*line); %};
+    bool contains_polyline(Polyline* polyline)
+        %code{% RETVAL = THIS->contains(*polyline); %};
     void simplify(double tolerance);
     Polygons polygons()
         %code{% RETVAL = *THIS; %};
+    Clone<Polygon> convex_hull();
 %{
 
 ExPolygonCollection*
@@ -71,14 +76,6 @@ ExPolygonCollection::append(...)
             expolygon.from_SV_check( ST(i) );
             THIS->expolygons.push_back(expolygon);
         }
-
-Polygon*
-ExPolygonCollection::convex_hull()
-    CODE:
-        RETVAL = new Polygon ();
-        THIS->convex_hull(RETVAL);
-    OUTPUT:
-        RETVAL
 
 %}
 };

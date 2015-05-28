@@ -2,8 +2,8 @@
 
 %{
 #include <myinit.h>
-#include "Model.hpp"
-#include "PrintConfig.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/PrintConfig.hpp"
 %}
 
 %name{Slic3r::Model} class Model {
@@ -14,10 +14,14 @@
         %code%{ RETVAL = THIS; %};
     
     %name{_add_object} Ref<ModelObject> add_object();
-    Ref<ModelObject> _add_object_clone(ModelObject* other)
-        %code%{ RETVAL = THIS->add_object(*other); %};
+    Ref<ModelObject> _add_object_clone(ModelObject* other, bool copy_volumes = true)
+        %code%{ RETVAL = THIS->add_object(*other, copy_volumes); %};
     void delete_object(size_t idx);
     void clear_objects();
+    size_t objects_count()
+        %code%{ RETVAL = THIS->objects.size(); %};
+    Ref<ModelObject> get_object(int idx)
+        %code%{ RETVAL = THIS->objects.at(idx); %};
 
     Ref<ModelMaterial> get_material(t_model_material_id material_id)
         %code%{
@@ -53,12 +57,15 @@
     // void duplicate_objects(size_t copies_num, coordf_t distance, const BoundingBox &bb);
     // void arrange_objects(coordf_t distance, const BoundingBox &bb);
     // void duplicate(size_t copies_num, coordf_t distance, const BoundingBox &bb);
-    bool has_objects_with_no_instances() const;
-    // void bounding_box(BoundingBox* bb) const;
-    // void center_instances_around_point(const Pointf &point);
-    // void align_instances_to_origin();
-    // void translate(coordf_t x, coordf_t y, coordf_t z);
-    // void mesh(TriangleMesh* mesh) const;
+    bool has_objects_with_no_instances();
+    bool add_default_instances();
+    Clone<BoundingBoxf3> bounding_box();
+    void center_instances_around_point(Pointf* point)
+        %code%{ THIS->center_instances_around_point(*point); %};
+    void align_instances_to_origin();
+    void translate(double x, double y, double z);
+    Clone<TriangleMesh> mesh();
+    Clone<TriangleMesh> raw_mesh();
     // void split_meshes();
     // std::string get_material_name(t_model_material_id material_id);
 
@@ -105,6 +112,11 @@ ModelMaterial::attributes()
         %code%{ RETVAL = &THIS->instances; %};
     
     void invalidate_bounding_box();
+    void update_bounding_box();
+    Clone<TriangleMesh> mesh();
+    Clone<TriangleMesh> raw_mesh();
+    Clone<BoundingBoxf3> raw_bounding_box();
+    Clone<BoundingBoxf3> instance_bounding_box(int idx);
 
     Ref<BoundingBoxf3> _bounding_box(BoundingBoxf3* new_bbox = NULL)
         %code{%
@@ -119,6 +131,7 @@ ModelMaterial::attributes()
 
             RETVAL = &THIS->_bounding_box;
         %};
+    Clone<BoundingBoxf3> bounding_box();
 
     %name{_add_volume} Ref<ModelVolume> add_volume(TriangleMesh* mesh)
         %code%{ RETVAL = THIS->add_volume(*mesh); %};
@@ -127,6 +140,8 @@ ModelMaterial::attributes()
 
     void delete_volume(size_t idx);
     void clear_volumes();
+    int volumes_count()
+        %code%{ RETVAL = THIS->volumes.size(); %};
 
     %name{_add_instance} Ref<ModelInstance> add_instance();
     Ref<ModelInstance> _add_instance_clone(ModelInstance* other)
@@ -136,6 +151,10 @@ ModelMaterial::attributes()
     int instances_count()
         %code%{ RETVAL = THIS->instances.size(); %};
 
+    std::string name()
+        %code%{ RETVAL = THIS->name; %};
+    void set_name(std::string value)
+        %code%{ THIS->name = value; %};
     std::string input_file()
         %code%{ RETVAL = THIS->input_file; %};
     void set_input_file(std::string value)
@@ -151,10 +170,32 @@ ModelMaterial::attributes()
     void set_layer_height_ranges(t_layer_height_ranges ranges)
         %code%{ THIS->layer_height_ranges = ranges; %};
 
-    Ref<Pointf> origin_translation()
+    Ref<Pointf3> origin_translation()
         %code%{ RETVAL = &THIS->origin_translation; %};
-    void set_origin_translation(Pointf* point)
+    void set_origin_translation(Pointf3* point)
         %code%{ THIS->origin_translation = *point; %};
+    
+    bool needed_repair() const;
+    int materials_count() const;
+    int facets_count();
+    void center_around_origin();
+    void translate(double x, double y, double z);
+    void scale_xyz(Pointf3* versor)
+        %code{% THIS->scale(*versor); %};
+    void rotate(float angle, Axis axis);
+    void flip(Axis axis);
+    
+    Model* cut(double z)
+        %code%{
+            RETVAL = new Model();
+            THIS->cut(z, RETVAL);
+        %};
+
+    ModelObjectPtrs* split_object()
+        %code%{
+            RETVAL = new ModelObjectPtrs();  // leak?
+            THIS->split(RETVAL);
+        %};
 };
 
 
@@ -162,11 +203,17 @@ ModelMaterial::attributes()
     Ref<ModelObject> object()
         %code%{ RETVAL = THIS->get_object(); %};
     
+    std::string name()
+        %code%{ RETVAL = THIS->name; %};
+    void set_name(std::string value)
+        %code%{ THIS->name = value; %};
     t_model_material_id material_id();
     void set_material_id(t_model_material_id material_id)
         %code%{ THIS->material_id(material_id); %};
     Ref<ModelMaterial> material();
     
+    Ref<DynamicPrintConfig> config()
+        %code%{ RETVAL = &THIS->config; %};
     Ref<TriangleMesh> mesh()
         %code%{ RETVAL = &THIS->mesh; %};
     
@@ -174,6 +221,8 @@ ModelMaterial::attributes()
         %code%{ RETVAL = THIS->modifier; %};
     void set_modifier(bool modifier)
         %code%{ THIS->modifier = modifier; %};
+    
+    ModelMaterial* assign_unique_material();
 };
 
 
@@ -194,4 +243,7 @@ ModelMaterial::attributes()
         %code%{ THIS->scaling_factor = val; %};
     void set_offset(Pointf *offset)
         %code%{ THIS->offset = *offset; %};
+    
+    void transform_mesh(TriangleMesh* mesh, bool dont_translate = false) const;
+    void transform_polygon(Polygon* polygon) const;
 };

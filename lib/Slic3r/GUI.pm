@@ -7,15 +7,17 @@ use File::Basename qw(basename);
 use FindBin;
 use Slic3r::GUI::AboutDialog;
 use Slic3r::GUI::BedShapeDialog;
+use Slic3r::GUI::BonjourBrowser;
 use Slic3r::GUI::ConfigWizard;
 use Slic3r::GUI::MainFrame;
 use Slic3r::GUI::Notifier;
 use Slic3r::GUI::Plater;
 use Slic3r::GUI::Plater::2D;
 use Slic3r::GUI::Plater::2DToolpaths;
+use Slic3r::GUI::Plater::3D;
+use Slic3r::GUI::Plater::3DPreview;
 use Slic3r::GUI::Plater::ObjectPartsPanel;
 use Slic3r::GUI::Plater::ObjectCutDialog;
-use Slic3r::GUI::Plater::ObjectPreviewDialog;
 use Slic3r::GUI::Plater::ObjectSettingsDialog;
 use Slic3r::GUI::Plater::OverrideSettingsPanel;
 use Slic3r::GUI::Preferences;
@@ -25,11 +27,12 @@ use Slic3r::GUI::OptionsGroup::Field;
 use Slic3r::GUI::SimpleTab;
 use Slic3r::GUI::Tab;
 
-our $have_OpenGL = eval "use Slic3r::GUI::PreviewCanvas; 1";
+our $have_OpenGL = eval "use Slic3r::GUI::3DScene; 1";
+our $have_LWP    = eval "use LWP::UserAgent; 1";
 
 use Wx 0.9901 qw(:bitmap :dialog :icon :id :misc :systemsettings :toplevelwindow
     :filedialog);
-use Wx::Event qw(EVT_IDLE);
+use Wx::Event qw(EVT_IDLE EVT_COMMAND);
 use base 'Wx::App';
 
 use constant FILE_WILDCARDS => {
@@ -58,11 +61,13 @@ our $Settings = {
     },
 };
 
-our $have_button_icons = &Wx::wxVERSION_STRING =~ / 2\.9\.[1-9]/;
+our $have_button_icons = &Wx::wxVERSION_STRING =~ / (?:2\.9\.[1-9]|3\.)/;
 our $small_font = Wx::SystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
 $small_font->SetPointSize(11) if !&Wx::wxMSW;
 our $medium_font = Wx::SystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
 $medium_font->SetPointSize(12);
+
+our $VERSION_CHECK_EVENT : shared = Wx::NewEventType;
 
 sub OnInit {
     my ($self) = @_;
@@ -73,21 +78,25 @@ sub OnInit {
     $self->{notifier} = Slic3r::GUI::Notifier->new;
     
     # locate or create data directory
-    $datadir ||= Wx::StandardPaths::Get->GetUserDataDir;
-    $datadir = Slic3r::encode_path($datadir);
+    $datadir ||= Slic3r::decode_path(Wx::StandardPaths::Get->GetUserDataDir);
+    my $enc_datadir = Slic3r::encode_path($datadir);
     Slic3r::debugf "Data directory: %s\n", $datadir;
     
     # just checking for existence of $datadir is not enough: it may be an empty directory
     # supplied as argument to --datadir; in that case we should still run the wizard
-    my $run_wizard = (-d $datadir && -e "$datadir/slic3r.ini") ? 0 : 1;
-    for ($datadir, "$datadir/print", "$datadir/filament", "$datadir/printer") {
-        mkdir or $self->fatal_error("Slic3r was unable to create its data directory at $_ (errno: $!).")
-            unless -d $_;
+    my $run_wizard = (-d $enc_datadir && -e "$enc_datadir/slic3r.ini") ? 0 : 1;
+    foreach my $dir ($enc_datadir, "$enc_datadir/print", "$enc_datadir/filament", "$enc_datadir/printer") {
+        next if -d $dir;
+        if (!mkdir $dir) {
+            my $error = "Slic3r was unable to create its data directory at $dir ($!).";
+            warn "$error\n";
+            fatal_error(undef, $error);
+        }
     }
     
     # load settings
     my $last_version;
-    if (-f "$datadir/slic3r.ini") {
+    if (-f "$enc_datadir/slic3r.ini") {
         my $ini = eval { Slic3r::Config->read_ini("$datadir/slic3r.ini") };
         $Settings = $ini if $ini;
         $last_version = $Settings->{_}{version};
@@ -133,6 +142,25 @@ sub OnInit {
         }
     });
     
+    EVT_COMMAND($self, -1, $VERSION_CHECK_EVENT, sub {
+        my ($self, $event) = @_;
+        my ($success, $response, $manual_check) = @{$event->GetData};
+        
+        if ($success) {
+            if ($response =~ /^obsolete ?= ?([a-z0-9.-]+,)*\Q$Slic3r::VERSION\E(?:,|$)/) {
+                my $res = Wx::MessageDialog->new(undef, "A new version is available. Do you want to open the Slic3r website now?",
+                    'Update', wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxICON_INFORMATION | wxICON_ERROR)->ShowModal;
+                Wx::LaunchDefaultBrowser('http://slic3r.org/') if $res == wxID_YES;
+            } else {
+                Slic3r::GUI::show_info(undef, "You're using the latest version. No updates are available.") if $manual_check;
+            }
+            $Settings->{_}{last_version_check} = time();
+            $self->save_settings;
+        } else {
+            Slic3r::GUI::show_error(undef, "Failed to check for updates. Try later.") if $manual_check;
+        }
+    });
+    
     return 1;
 }
 
@@ -159,22 +187,19 @@ sub catch_error {
 
 # static method accepting a wxWindow object as first parameter
 sub show_error {
-    my $self = shift;
-    my ($message) = @_;
-    Wx::MessageDialog->new($self, $message, 'Error', wxOK | wxICON_ERROR)->ShowModal;
+    my ($parent, $message) = @_;
+    Wx::MessageDialog->new($parent, $message, 'Error', wxOK | wxICON_ERROR)->ShowModal;
 }
 
 # static method accepting a wxWindow object as first parameter
 sub show_info {
-    my $self = shift;
-    my ($message, $title) = @_;
-    Wx::MessageDialog->new($self, $message, $title || 'Notice', wxOK | wxICON_INFORMATION)->ShowModal;
+    my ($parent, $message, $title) = @_;
+    Wx::MessageDialog->new($parent, $message, $title || 'Notice', wxOK | wxICON_INFORMATION)->ShowModal;
 }
 
 # static method accepting a wxWindow object as first parameter
 sub fatal_error {
-    my $self = shift;
-    $self->show_error(@_);
+    show_error(@_);
     exit 1;
 }
 
@@ -211,8 +236,10 @@ sub presets {
     my ($self, $section) = @_;
     
     my %presets = ();
-    opendir my $dh, "$Slic3r::GUI::datadir/$section" or die "Failed to read directory $Slic3r::GUI::datadir/$section (errno: $!)\n";
+    opendir my $dh, Slic3r::encode_path("$Slic3r::GUI::datadir/$section")
+        or die "Failed to read directory $Slic3r::GUI::datadir/$section (errno: $!)\n";
     foreach my $file (grep /\.ini$/i, readdir $dh) {
+        $file = Slic3r::decode_path($file);
         my $name = basename($file);
         $name =~ s/\.ini$//;
         $presets{$name} = "$Slic3r::GUI::datadir/$section/$file";
@@ -226,11 +253,11 @@ sub have_version_check {
     my ($self) = @_;
     
     # return an explicit 0
-    return ($Slic3r::have_threads && $Slic3r::build && eval "use LWP::UserAgent; 1") || 0;
+    return ($Slic3r::have_threads && $Slic3r::build && $have_LWP) || 0;
 }
 
 sub check_version {
-    my ($self, %p) = @_;
+    my ($self, $manual_check) = @_;
     
     Slic3r::debugf "Checking for updates...\n";
     
@@ -239,19 +266,9 @@ sub check_version {
         my $ua = LWP::UserAgent->new;
         $ua->timeout(10);
         my $response = $ua->get('http://slic3r.org/updatecheck');
-        if ($response->is_success) {
-            if ($response->decoded_content =~ /^obsolete ?= ?([a-z0-9.-]+,)*\Q$Slic3r::VERSION\E(?:,|$)/) {
-                my $res = Wx::MessageDialog->new(undef, "A new version is available. Do you want to open the Slic3r website now?",
-                    'Update', wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxICON_INFORMATION | wxICON_ERROR)->ShowModal;
-                Wx::LaunchDefaultBrowser('http://slic3r.org/') if $res == wxID_YES;
-            } else {
-                Slic3r::GUI::show_info(undef, "You're using the latest version. No updates are available.") if $p{manual};
-            }
-            $Settings->{_}{last_version_check} = time();
-            $self->save_settings;
-        } else {
-            Slic3r::GUI::show_error(undef, "Failed to check for updates. Try later.") if $p{manual};
-        }
+        Wx::PostEvent($self, Wx::PlThreadEvent->new(-1, $VERSION_CHECK_EVENT,
+            threads::shared::shared_clone([ $response->is_success, $response->decoded_content, $manual_check ])));
+        
         Slic3r::thread_cleanup();
     })->detach;
 }
@@ -277,7 +294,7 @@ sub open_model {
         $dialog->Destroy;
         return;
     }
-    my @input_files = $dialog->GetPaths;
+    my @input_files = map Slic3r::decode_path($_), $dialog->GetPaths;
     $dialog->Destroy;
     
     return @input_files;

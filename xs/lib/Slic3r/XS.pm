@@ -23,15 +23,25 @@ use overload
     '@{}' => sub { [ $_[0]->x, $_[0]->y, $_[0]->z ] },  #,
     'fallback' => 1;
 
+sub pp {
+    my ($self) = @_;
+    return [ @$self ];
+}
+
 package Slic3r::Pointf;
 use overload
-    '@{}' => sub { [ $_[0]->x, $_[0]->y ] },  #,
+    '@{}' => sub { $_[0]->arrayref },
     'fallback' => 1;
 
 package Slic3r::Pointf3;
 use overload
     '@{}' => sub { [ $_[0]->x, $_[0]->y, $_[0]->z ] },  #,
     'fallback' => 1;
+
+sub pp {
+    my ($self) = @_;
+    return [ @$self ];
+}
 
 package Slic3r::ExPolygon;
 use overload
@@ -119,7 +129,7 @@ sub new {
     my ($class, %args) = @_;
     
     my $self = $class->_new(
-        @args{qw(width spacing nozzle_diameter)},
+        @args{qw(width height nozzle_diameter)},
     );
     $self->set_bridge($args{bridge} // 0);
     return $self;
@@ -178,10 +188,23 @@ use overload
     '@{}' => sub { $_[0]->arrayref },
     'fallback' => 1;
 
+sub new {
+    my ($class, @surfaces) = @_;
+    
+    my $self = $class->_new;
+    $self->append($_) for @surfaces;
+    return $self;
+}
+
+package Slic3r::GUI::_3DScene::GLVertexArray;
+sub CLONE_SKIP { 1 }
+
 package main;
 for my $class (qw(
+        Slic3r::BridgeDetector
         Slic3r::Config
         Slic3r::Config::Full
+        Slic3r::Config::GCode
         Slic3r::Config::Print
         Slic3r::Config::PrintObject
         Slic3r::Config::PrintRegion
@@ -200,6 +223,7 @@ for my $class (qw(
         Slic3r::Layer::Region
         Slic3r::Layer::Support
         Slic3r::Line
+        Slic3r::Linef3
         Slic3r::Model
         Slic3r::Model::Instance
         Slic3r::Model::Material

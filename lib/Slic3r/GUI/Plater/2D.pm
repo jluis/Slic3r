@@ -27,7 +27,7 @@ sub new {
     $self->{on_select_object}   = sub {};
     $self->{on_double_click}    = sub {};
     $self->{on_right_click}     = sub {};
-    $self->{on_instance_moved}  = sub {};
+    $self->{on_instances_moved} = sub {};
     
     $self->{objects_brush}      = Wx::Brush->new(Wx::Colour->new(210,210,210), wxSOLID);
     $self->{selected_brush}     = Wx::Brush->new(Wx::Colour->new(255,128,128), wxSOLID);
@@ -63,9 +63,9 @@ sub on_right_click {
     $self->{on_right_click} = $cb;
 }
 
-sub on_instance_moved {
+sub on_instances_moved {
     my ($self, $cb) = @_;
-    $self->{on_instance_moved} = $cb;
+    $self->{on_instances_moved} = $cb;
 }
 
 sub repaint {
@@ -75,16 +75,16 @@ sub repaint {
     my $size = $self->GetSize;
     my @size = ($size->GetWidth, $size->GetHeight);
     
+    # draw grid
+    $dc->SetPen($self->{grid_pen});
+    $dc->DrawLine(map @$_, @$_) for @{$self->{grid}};
+    
     # draw bed
     {
         $dc->SetPen($self->{print_center_pen});
         $dc->SetBrush($self->{transparent_brush});
         $dc->DrawPolygon($self->scaled_points_to_pixel($self->{bed_polygon}, 1), 0, 0);
     }
-    
-    # draw grid
-    $dc->SetPen($self->{grid_pen});
-    $dc->DrawLine(map @$_, @$_) for @{$self->{grid}};
     
     # draw print center
     if (@{$self->{objects}} && $Slic3r::GUI::Settings->{_}{autocenter}) {
@@ -94,8 +94,8 @@ sub repaint {
         $dc->DrawLine(0, $center->[Y], $size[X], $center->[Y]);
         $dc->SetTextForeground(Wx::Colour->new(0,0,0));
         $dc->SetFont(Wx::Font->new(10, wxDEFAULT, wxNORMAL, wxNORMAL));
-        $dc->DrawLabel("X = " . $self->{print_center}->[X], Wx::Rect->new(0, 0, $center->[X]*2, $self->GetSize->GetHeight), wxALIGN_CENTER_HORIZONTAL | wxALIGN_BOTTOM);
-        $dc->DrawRotatedText("Y = " . $self->{print_center}->[Y], 0, $center->[Y]+15, 90);
+        $dc->DrawLabel("X = " . sprintf('%.0f', $self->{print_center}->[X]), Wx::Rect->new(0, 0, $center->[X]*2, $self->GetSize->GetHeight), wxALIGN_CENTER_HORIZONTAL | wxALIGN_BOTTOM);
+        $dc->DrawRotatedText("Y = " . sprintf('%.0f', $self->{print_center}->[Y]), 0, $center->[Y]+15, 90);
     }
     
     # draw frame
@@ -166,7 +166,7 @@ sub repaint {
     if (@{$self->{objects}} && $self->{config}->skirts) {
         my @points = map @{$_->contour}, map @$_, map @{$_->instance_thumbnails}, @{$self->{objects}};
         if (@points >= 3) {
-            my ($convex_hull) = @{offset([convex_hull(\@points)], scale($self->{config}->skirt_distance), 1, JT_ROUND, scale(0.1))};
+            my ($convex_hull) = @{offset([convex_hull(\@points)], scale max($self->{config}->brim_width + $self->{config}->skirt_distance), 1, JT_ROUND, scale(0.1))};
             $dc->SetPen($self->{skirt_pen});
             $dc->SetBrush($self->{transparent_brush});
             $dc->DrawPolygon($self->scaled_points_to_pixel($convex_hull, 1), 0, 0);
@@ -183,9 +183,11 @@ sub mouse_event {
     my $point = $self->point_to_model_units([ $pos->x, $pos->y ]);  #]]
     if ($event->ButtonDown) {
         $self->{on_select_object}->(undef);
-        OBJECTS: for my $obj_idx (0 .. $#{$self->{objects}}) {
+        # traverse objects and instances in reverse order, so that if they're overlapping
+        # we get the one that gets drawn last, thus on top (as user expects that to move)
+        OBJECTS: for my $obj_idx (reverse 0 .. $#{$self->{objects}}) {
             my $object = $self->{objects}->[$obj_idx];
-            for my $instance_idx (0 .. $#{ $object->instance_thumbnails }) {
+            for my $instance_idx (reverse 0 .. $#{ $object->instance_thumbnails }) {
                 my $thumbnail = $object->instance_thumbnails->[$instance_idx];
                 if (defined first { $_->contour->contains_point($point) } @$thumbnail) {
                     $self->{on_select_object}->($obj_idx);
@@ -208,13 +210,13 @@ sub mouse_event {
             }
         }
         $self->Refresh;
-    } elsif ($event->ButtonUp(&Wx::wxMOUSE_BTN_LEFT)) {
-        $self->{on_instance_moved}->();
-        $self->Refresh;
+    } elsif ($event->LeftUp) {
+        $self->{on_instances_moved}->()
+            if $self->{drag_object};
         $self->{drag_start_pos} = undef;
         $self->{drag_object} = undef;
         $self->SetCursor(wxSTANDARD_CURSOR);
-    } elsif ($event->ButtonDClick) {
+    } elsif ($event->LeftDClick) {
     	$self->{on_double_click}->();
     } elsif ($event->Dragging) {
         return if !$self->{drag_start_pos}; # concurrency problems
@@ -255,8 +257,8 @@ sub update_bed_size {
     
     # calculate the displacement needed to center bed
     $self->{bed_origin} = [
-        $self->GetSize->GetWidth/2  - (unscale($bb->x_max + $bb->x_min)/2 * $self->{scaling_factor}),
-        $canvas_h - ($self->GetSize->GetHeight/2 - (unscale($bb->y_max + $bb->y_min)/2 * $self->{scaling_factor})),
+        $canvas_w/2  - (unscale($bb->x_max + $bb->x_min)/2 * $self->{scaling_factor}),
+        $canvas_h - ($canvas_h/2 - (unscale($bb->y_max + $bb->y_min)/2 * $self->{scaling_factor})),
     ];
     
     # calculate print center
@@ -267,14 +269,14 @@ sub update_bed_size {
     {
         my $step = scale 10;  # 1cm grid
         my @polylines = ();
-        for (my $x = $bb->x_min + $step; $x < $bb->x_max; $x += $step) {
+        for (my $x = $bb->x_min - ($bb->x_min % $step) + $step; $x < $bb->x_max; $x += $step) {
             push @polylines, Slic3r::Polyline->new([$x, $bb->y_min], [$x, $bb->y_max]);
         }
-        for (my $y = $bb->y_min + $step; $y < $bb->y_max; $y += $step) {
+        for (my $y = $bb->y_min - ($bb->y_min % $step) + $step; $y < $bb->y_max; $y += $step) {
             push @polylines, Slic3r::Polyline->new([$bb->x_min, $y], [$bb->x_max, $y]);
         }
         @polylines = @{intersection_pl(\@polylines, [$polygon])};
-        $self->{grid} = [ map $self->scaled_points_to_pixel(\@$_, 1), @polylines ];
+        $self->{grid} = [ map $self->scaled_points_to_pixel([ @$_[0,-1] ], 1), @polylines ];
     }
 }
 
